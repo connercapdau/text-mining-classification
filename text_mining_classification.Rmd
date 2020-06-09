@@ -1,0 +1,128 @@
+---
+title: "Text Mining Classification"
+author: "Conner Capdau"
+date: 'April 26, 2019'
+output:
+  word_document: default
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# needed packages
+library(tm)
+library(e1071)
+library(mda)
+```
+
+## Explore data
+
+```{r}
+# read in data and check summary of data
+data = read.csv("Womens Clothing E-Commerce Reviews.csv", stringsAsFactors=F)
+summary(data)
+
+# X can be removed because it is only the row numbers of the csv
+data$X = NULL
+
+# check structure of the variables
+str(data)
+
+# change Recommended.IND to be factor instead of integer, and division/class/department to factor instead of characters
+data$Recommended.IND = as.factor(data$Recommended.IND)
+data$Division.Name = as.factor(data$Division.Name)
+data$Department.Name = as.factor(data$Department.Name)
+data$Class.Name = as.factor(data$Class.Name)
+
+# I'm just curious to how many different articles of clothing that are reviewed
+length(unique(data$Clothing.ID)) # there are 1179
+
+# since we'll be using reviews for predicting, make sure there are no empty reviews
+length(which(data$Review.Text==""))
+# there are 845 empty reviews those reviews need to be removed
+data = data[!(data$Review.Text==""),]
+```
+
+When looking at the summary of data, we see variable 'X' is not needed because it only marks the row numbers from the CSV. We also see that 82% of reviews recommend the clothing the review is for. We also see the majority of ratings are 5 (since the median is equal to the max value), and the mean rating is 4.2. This makes sense given the high percentage of recommendations from the reviews.
+
+```{r}
+# view barplot of ratings based on recommended or not
+par(mfrow=c(1,2)) # to see plots side-by-side
+
+barplot(table(data$Rating[which(data$Recommended.IND==1)]), main="W/ Recommendation", ylim=c(0,12000))
+barplot(table(data$Rating[which(data$Recommended.IND==0)]), main="No Recommendation", ylim=c(0,12000))
+
+# reset to have one plot shown at a time
+par(mfrow=c(1,1))
+```
+
+We can see from the barplots that almost all 4 and 5 ratings resulted in recommendations, 1 and 2 ratings were almost always no recommendation, and 3 ratings were fairly evenly split between recommending and not recommending.
+
+## Text Analysis
+
+```{r}
+# create corpus of words from data
+corpus_text = Corpus(VectorSource(data$Review.Text))
+
+# make all words lowercase  
+corpus_text = tm_map(corpus_text, tolower)
+# remove punctuation
+corpus_text = tm_map(corpus_text, removePunctuation)
+# remove stop words
+corpus_text = tm_map(corpus_text, removeWords, c(stopwords("english")))
+# remove numbers
+corpus_text = tm_map(corpus_text, removeNumbers)
+# remove extra white space
+corpus_text = tm_map(corpus_text, stripWhitespace)
+# stem words
+corpus_text = tm_map(corpus_text, stemDocument, language="english")
+
+
+# the line below shows how the first review looks after the above changes
+print(as.character(corpus_text[[1]]))
+
+# convert corpus into a term matrix
+corpus_dtm = DocumentTermMatrix(corpus_text)
+
+# check dimensions of document term matrix
+dim(corpus_dtm) # there are 13,542 words
+
+# the number of words need to be simplified by keeping higher frequency words
+corpus_final = removeSparseTerms(corpus_dtm, sparse=0.9)
+dim(corpus_final) # only has 39 words; much more manageable
+```
+
+## Classification with SVM
+
+```{r}
+# split the data between a training and testing set; along with splitting y from corpus words input for training and testing
+set.seed(5) # set seed for reproducability
+train_index = sample(1:nrow(data), nrow(data)*0.8, replace=F)
+train = as.matrix(corpus_final[train_index,])
+train_y = data$Recommended.IND[train_index]
+test = as.matrix(corpus_final[-train_index,])
+test_y = data$Recommended.IND[-train_index]
+
+# create model using svm 
+model.svm = svm(train_y ~ ., data = train)
+# run prediction using svm model
+pred.svm = predict(model.svm, test)
+
+# check results
+results = confusion(pred.svm, test_y); results
+
+# accuracy
+100*(3647+124)/(124+61+697+3647)
+sum(diag(results)) / sum(results)
+# 0.833
+
+# accuracy if 1 was always guessed
+(3647+61)/4529
+# 0.819
+```
+
+The results show the model is 83.3% accurate which sounds good until you compare it with how most of the reviews are recommended. If a model were to always predict a review is recommended then the model would be 81.9% accurate. At least this model is slightly more accurate than always predicting Recommended.IND equal to 1.
